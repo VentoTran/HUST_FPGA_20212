@@ -58,3 +58,4 @@ dkms.conf
 *incremental_db/
 *output_files/
 *.zip
+*.rptPreview
