@@ -15,7 +15,8 @@ ENTITY TEST_AHT10 IS
 		LED7_2			: OUT		STD_LOGIC_VECTOR (6 DOWNTO 0);
 		LED7_3			: OUT		STD_LOGIC_VECTOR (6 DOWNTO 0);
 		I2C_SDA       	: INOUT  STD_LOGIC;  	
-		I2C_SCL       	: INOUT  STD_LOGIC
+		I2C_SCL       	: INOUT  STD_LOGIC;
+		SERIAL_TX			: OUT		STD_LOGIC
 	);
 END TEST_AHT10;
 
@@ -44,6 +45,22 @@ ARCHITECTURE BEHAVIOUR OF TEST_AHT10 IS
 		 );                   
 	END COMPONENT I2C_Master;
 	
+	COMPONENT UART_TX is
+		port (
+			CLK       : in  STD_LOGIC;
+			TX_EN     : in  STD_LOGIC;
+			TX_Byte   : in  STD_LOGIC_VECTOR(7 downto 0);
+			TX_Serial : out STD_LOGIC := '0';
+			TX_Done   : out STD_LOGIC := '0'
+		);
+	end COMPONENT UART_TX;
+	
+	SIGNAL UART_ENA		:	STD_LOGIC	:= '0';
+	SIGNAL UART_BYTE		:	STD_LOGIC_VECTOR (7 DOWNTO 0);
+	SIGNAL UART_DONE		:	STD_LOGIC	:= '0';
+	SIGNAL UART_DONE_PREV:	STD_LOGIC	:= '0';
+	SIGNAL UART_READY		:	STD_LOGIC	:= '0';
+	
 	SIGNAL I2C_RST			:	STD_LOGIC	:= '1';
 	SIGNAL I2C_ENA			:	STD_LOGIC	:= '0';
 	SIGNAL I2C_WR			:	STD_LOGIC;
@@ -62,6 +79,8 @@ BEGIN
 	C1: I2C_Master port map (	clk=>CLK, 			reset_n=>I2C_RST, 		ena=>I2C_ENA, 				addr=>I2C_ADDR, 	rw=>I2C_WR, 	data_wr=>I2C_DATA_OUT,
 										busy=>I2C_BUSY, 	data_rd=>I2C_DATA_IN, 	ack_error=>I2C_ERROR, 	sda=>I2C_SDA, 		scl=>I2C_SCL);
 
+	C2: UART_TX port map	(CLK=>CLK,	TX_EN=>UART_ENA,	TX_Byte=>UART_BYTE,	TX_Done=>UART_DONE,	TX_Serial=>SERIAL_TX);
+	
 	P1: PROCESS(CLK)
 		VARIABLE COUNT_1s: 		INTEGER RANGE 0 TO 50000000 := 0;
 		VARIABLE FLAG_1s: 		INTEGER RANGE 0 TO 1 := 0;
@@ -73,6 +92,7 @@ BEGIN
 		VARIABLE TEMP_RAW:		INTEGER	:= 0;
 		VARIABLE HUMD_RAW:		INTEGER	:=	0;
 		VARIABLE LED:				STD_LOGIC	:= '0';
+		VARIABLE J	:	INTEGER RANGE 0 TO 4;
 	BEGIN
 		IF (CLK'EVENT AND CLK = '1') THEN
 			
@@ -85,7 +105,6 @@ BEGIN
 			LEDG(6) <= LED;
 			
 			IF (I2C_BUSY_PREV = '0' AND I2C_BUSY = '1' AND I2C_ENA = '1' AND FLAG_1s = 1) THEN
-				
 				IF (COUNT_SEND = 3) THEN
 					IF (COUNT_RECV < 6) THEN
 						COUNT_RECV := COUNT_RECV + 1;
@@ -102,8 +121,11 @@ BEGIN
 						FLAG_1s := 0;
 					END IF;
 				END IF;
-				
-				
+			END IF;
+			
+			IF (I2C_ERROR = '1') THEN
+				I2C_RST <= '0';
+				FLAG_1s := 0;
 			END IF;
 			
 			IF (COUNT_1s = 50000000) THEN
@@ -125,6 +147,7 @@ BEGIN
 				LEDG(2) <= '0';
 				FLAG_1s := 0;
 				FLAG_DONE := 0;
+				UART_READY <= '1';
 			END IF;
 			
 			IF (FLAG_1s = 1 AND FLAG_DONE = 0) THEN
@@ -176,6 +199,36 @@ BEGIN
 				END CASE;
 			END IF;
 			
+			
+			IF (UART_READY = '1') THEN
+				UART_DONE_PREV <= UART_DONE;
+				
+				CASE J IS
+					WHEN 0 =>
+						UART_BYTE(7 DOWNTO 0) <= std_logic_vector(to_unsigned(TEMPERATURE, 8));
+						UART_ENA <= '1';
+						J := J + 1;
+					WHEN 1 =>
+						UART_ENA <= '0';
+					WHEN 2 =>
+						UART_BYTE(7 DOWNTO 0) <= std_logic_vector(to_unsigned(HUMIDITY, 8));
+						UART_ENA <= '1';
+						J := J + 1;
+					WHEN 3 =>
+						UART_ENA <= '0';
+					WHEN 4 =>
+						J := 0;
+						UART_ENA <= '0';
+						UART_READY <= '0';
+						UART_DONE_PREV <= '0';
+				END CASE;
+				
+				IF (UART_DONE_PREV = '0' AND UART_DONE = '1' AND ((J = 1) OR (J = 3))) THEN
+					J := J + 1;
+				END IF;
+				
+			END IF;
+		
 		END IF;
 	END PROCESS;
 
